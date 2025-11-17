@@ -78,6 +78,12 @@ def generate_launch_description():
         )
     )
     ld.add_action(
+        DeclareLaunchArgument(
+            "use_simple_floor", default_value="false", choices=["true", "false"],
+            description="Use simple floor environment (no RoboCasa kitchen). Takes precedence over use_robocasa."
+        )
+    )
+    ld.add_action(
         DeclareLaunchArgument("robocasa_task", default_value="PnPCounterToCab")
     )
     ld.add_action(
@@ -181,6 +187,7 @@ def generate_launch_description():
             "use_mujoco_viewer": LaunchConfiguration("use_mujoco_viewer"),
             "use_cameras": LaunchConfiguration("use_cameras"),
             "use_robocasa": LaunchConfiguration("use_robocasa"),
+            "use_simple_floor": LaunchConfiguration("use_simple_floor"),
             "robocasa_task": LaunchConfiguration("robocasa_task"),
             "robocasa_layout": (
                 robocasa_layout
