@@ -294,6 +294,15 @@ class StretchMujocoDriver(Node):
         self.move_to_position(qpos)
         self.robot_mode_rwlock.release_read()
 
+    # TODO: Add method that clears world frames by using something akin to this:
+#     from stretch_mujoco.stretch_mujoco_simulator import StretchMujocoSimulator
+#    ...: sim = StretchMujocoSimulator()
+#    ...: sim.start(headless=False)
+#    ...: sim.add_world_frame((0.1,0,0  ), (0,0,0))
+#    ...: sim.add_world_frame((0.2,0,0), (1.57,0,0))
+#    ...: command = sim.data_proxies.get_command()
+    # command.clear_coordinate_frame_arrows_viz=True
+    # sim.data_proxies.set_command(command)
     def add_mujoco_world_frame_callback(self, msg):
         """
         Callback for storing MuJoCo world frames for goal visualization.
