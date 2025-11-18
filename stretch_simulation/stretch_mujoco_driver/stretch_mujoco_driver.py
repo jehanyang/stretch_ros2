@@ -6,12 +6,15 @@ from functools import cache
 import cv2
 import numpy as np
 import threading
+import tempfile
+import mujoco
 
 from sensor_msgs.msg._compressed_image import CompressedImage
 from stretch_mujoco import StretchMujocoSimulator
 from stretch_mujoco.enums.actuators import Actuators
 from stretch_mujoco.enums.stretch_sensors import StretchSensors
 from stretch_mujoco.enums.stretch_cameras import CameraSettings, StretchCameras
+from stretch_mujoco.utils import get_absolute_path_stretch_xml
 from stretch_mujoco.robocasa_gen import (
     layout_from_str,
     style_from_str,
@@ -34,6 +37,7 @@ from rclpy.parameter import Parameter
 
 from geometry_msgs.msg import Twist
 from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import PointStamped
 
 from std_srvs.srv import Trigger
 from std_srvs.srv import SetBool
@@ -82,6 +86,49 @@ DEFAULT_JOINT_STATE_HZ = 30.0
 DEFAULT_SIM_TOOL = "eoa_wrist_dw3_tool_sg3"
 
 
+def create_simple_floor_model():
+    """
+    Create a simple scene with Stretch robot on a floor.
+    Includes the robot, floor plane, and basic lighting.
+    Returns the loaded MuJoCo model.
+    """
+    # Get the base Stretch model
+    stretch_xml_path = get_absolute_path_stretch_xml()
+
+    # Create a simple scene XML that includes the robot and adds a floor
+    scene_xml = f"""<mujoco model="stretch_simple_floor">
+  <include file="{stretch_xml_path}"/>
+
+  <statistic center="0 0 .75" extent="1.2" meansize="0.05"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="-120" elevation="-20"/>
+  </visual>
+
+  <asset>
+    <material name="floor_mat" rgba=".2 .2 .2 1" reflectance="0.1"/>
+    <texture type="skybox" builtin="gradient" rgb1="0.44 0.80 1.00" rgb2="1 1 1" width="512" height="3072"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <light pos="2 2 2" dir="-1 -1 -1" directional="true" diffuse="0.3 0.3 0.3"/>
+    <geom name="floor" size="0 0 0.05" type="plane" material="floor_mat"/>
+  </worldbody>
+</mujoco>
+"""
+
+    # Save to a temporary file
+    with tempfile.NamedTemporaryFile(mode='w', suffix='.xml', delete=False) as f:
+        f.write(scene_xml)
+        temp_path = f.name
+
+    # Load and return the model
+    return mujoco.MjModel.from_xml_path(temp_path)
+
+
 class StretchMujocoDriver(Node):
 
     def __init__(self):
@@ -90,48 +137,55 @@ class StretchMujocoDriver(Node):
         self.declare_parameter("use_cameras", False)
         self.declare_parameter("use_mujoco_viewer", True)
         self.declare_parameter("use_robocasa", True)
+        self.declare_parameter("use_simple_floor", False)
         self.declare_parameter("robocasa_task", DEFAULT_ROBOCASA_TASK)
         self.declare_parameter("robocasa_layout", None)
         self.declare_parameter("robocasa_style", None)
 
         use_cameras = self.get_parameter("use_cameras").value
         use_mujoco_viewer = self.get_parameter("use_mujoco_viewer").value
+        use_simple_floor = self.get_parameter("use_simple_floor").value
 
         model = None
 
-        use_robocasa = self.get_parameter("use_robocasa").value
-        if use_robocasa:
-            robocasa_task: str | None = self.get_parameter("robocasa_task").value
-            robocasa_layout = self.get_parameter("robocasa_layout").value
-            robocasa_style = self.get_parameter("robocasa_style").value
+        # Simple floor takes precedence over robocasa
+        if use_simple_floor:
+            self.get_logger().info("Using simple floor environment (no RoboCasa kitchen)")
+            model = create_simple_floor_model()
+        else:
+            use_robocasa = self.get_parameter("use_robocasa").value
+            if use_robocasa:
+                robocasa_task: str | None = self.get_parameter("robocasa_task").value
+                robocasa_layout = self.get_parameter("robocasa_layout").value
+                robocasa_style = self.get_parameter("robocasa_style").value
 
-            if isinstance(robocasa_layout, str):
-                # Convert robocasa_layout to int
-                if robocasa_layout.isnumeric():
-                    robocasa_layout = int(robocasa_layout)
-                elif robocasa_layout == "Random":
-                    robocasa_layout = np.random.choice(range(len(layouts)))
-                else:
-                    robocasa_layout = layout_from_str(robocasa_layout)
-            elif robocasa_layout is None:
-                robocasa_layout = -1
+                if isinstance(robocasa_layout, str):
+                    # Convert robocasa_layout to int
+                    if robocasa_layout.isnumeric():
+                        robocasa_layout = int(robocasa_layout)
+                    elif robocasa_layout == "Random":
+                        robocasa_layout = np.random.choice(range(len(layouts)))
+                    else:
+                        robocasa_layout = layout_from_str(robocasa_layout)
+                elif robocasa_layout is None:
+                    robocasa_layout = -1
 
-            if isinstance(robocasa_style, str):
-                # Convert robocasa_style to int
-                if robocasa_style.isnumeric():
-                    robocasa_style = int(robocasa_style)
-                elif robocasa_style == "Random":
-                    robocasa_style = np.random.choice(range(len(get_styles())))
-                else:
-                    robocasa_style = style_from_str(robocasa_style)
-            elif robocasa_style is None:
-                robocasa_style = -1
+                if isinstance(robocasa_style, str):
+                    # Convert robocasa_style to int
+                    if robocasa_style.isnumeric():
+                        robocasa_style = int(robocasa_style)
+                    elif robocasa_style == "Random":
+                        robocasa_style = np.random.choice(range(len(get_styles())))
+                    else:
+                        robocasa_style = style_from_str(robocasa_style)
+                elif robocasa_style is None:
+                    robocasa_style = -1
 
-            model, xml, objects_info = model_generation_wizard(
-                task=robocasa_task or DEFAULT_ROBOCASA_TASK,
-                layout=robocasa_layout,
-                style=robocasa_style,
-            )
+                model, xml, objects_info = model_generation_wizard(
+                    task=robocasa_task or DEFAULT_ROBOCASA_TASK,
+                    layout=robocasa_layout,
+                    style=robocasa_style,
+                )
 
         sim = StretchMujocoSimulator(
             model=model,
@@ -144,6 +198,9 @@ class StretchMujocoDriver(Node):
         sim.start(headless=not use_mujoco_viewer)
 
         self.sim = sim
+
+        # Dictionary to track multiple goal world frames {frame_id: (x, y, z)}
+        self.goal_frames: dict[str, tuple[float, float, float]] = {}
 
         # Initialize calibration offsets
         self.head_tilt_calibrated_offset_rad = 0.0
@@ -236,6 +293,29 @@ class StretchMujocoDriver(Node):
         qpos = msg.data
         self.move_to_position(qpos)
         self.robot_mode_rwlock.release_read()
+
+    def add_mujoco_world_frame_callback(self, msg):
+        """
+        Callback for storing MuJoCo world frames for goal visualization.
+        Receives a PointStamped message where frame_id is the goal identifier
+        and point contains the (x, y, z) position.
+
+        Frames are stored and republished periodically since MuJoCo clears
+        user scene geometries each frame.
+        """
+        position = (msg.point.x, msg.point.y, msg.point.z)
+        frame_id = msg.header.frame_id
+
+        # Store or update the goal frame
+        self.goal_frames[frame_id] = position
+        self.get_logger().info(
+            f"Stored MuJoCo world frame '{frame_id}' at position {position}",
+            throttle_duration_sec=1.0
+        )
+
+        rotation = (0.0, 0.0, 0.0)  # No rotation for goal markers
+
+        self.sim.add_world_frame(position, rotation)
 
     def move_to_position(self, qpos):
         try:
@@ -1245,6 +1325,14 @@ class StretchMujocoDriver(Node):
             callback_group=self.main_group,
         )
 
+        self.create_subscription(
+            PointStamped,
+            "/mujoco/add_world_frame",
+            self.add_mujoco_world_frame_callback,
+            10,
+            callback_group=self.main_group,
+        )
+
         self.declare_parameter("rate", DEFAULT_JOINT_STATE_HZ)
         self.joint_state_rate: float = (
             self.get_parameter("rate").value or DEFAULT_JOINT_STATE_HZ
@@ -1420,6 +1508,7 @@ class StretchMujocoDriver(Node):
             self.command_mobile_base_velocity_and_publish_state,
             callback_group=self.mutex_group,
         )
+
 
         # self.create_timer(
         #     1/15,
