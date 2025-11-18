@@ -294,15 +294,20 @@ class StretchMujocoDriver(Node):
         self.move_to_position(qpos)
         self.robot_mode_rwlock.release_read()
 
-    # TODO: Add method that clears world frames by using something akin to this:
-#     from stretch_mujoco.stretch_mujoco_simulator import StretchMujocoSimulator
-#    ...: sim = StretchMujocoSimulator()
-#    ...: sim.start(headless=False)
-#    ...: sim.add_world_frame((0.1,0,0  ), (0,0,0))
-#    ...: sim.add_world_frame((0.2,0,0), (1.57,0,0))
-#    ...: command = sim.data_proxies.get_command()
-    # command.clear_coordinate_frame_arrows_viz=True
-    # sim.data_proxies.set_command(command)
+    def clear_mujoco_world_frames_callback(self, request, response):
+        """
+        Service callback to clear all MuJoCo world frames for goal visualization.
+
+        Frames are cleared since MuJoCo clears user scene geometries each frame.
+        """
+        self.sim.clear_world_frames()
+        self.goal_frames.clear()
+        self.get_logger().info("Cleared all MuJoCo world frames for goal visualization.")
+        response.success = True
+        response.message = ""
+        
+        return response
+
     def add_mujoco_world_frame_callback(self, msg):
         """
         Callback for storing MuJoCo world frames for goal visualization.
@@ -1471,6 +1476,13 @@ class StretchMujocoDriver(Node):
             SetBool,
             "/self_collision_avoidance",
             self.self_collision_avoidance_callback,
+            callback_group=self.main_group,
+        )
+
+        self.clear_world_frames = self.create_service(
+            Trigger,
+            "/clear_world_frames",
+            self.clear_mujoco_world_frames_callback,
             callback_group=self.main_group,
         )
 
