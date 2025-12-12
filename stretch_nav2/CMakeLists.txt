@@ -34,6 +34,7 @@ ament_python_install_package(${PROJECT_NAME})
 # Install Python executables
 install(PROGRAMS
   stretch_nav2/simple_commander_demo.py
+  stretch_nav2/cmd_vel_mux.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

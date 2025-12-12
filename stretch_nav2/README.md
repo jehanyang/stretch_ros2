@@ -39,6 +39,32 @@ In the top bar of Rviz, use `2D Nav Goal` to lay down an arrow where you'd like 
 
 **Tip**: If navigation fails or the robot becomes unresponsive to subsequent goals through RViz, you can still teleoperate the robot using the Xbox controller.
 
+### Navigation with Pause/Resume Control
+
+If you need the ability to pause and resume Nav2 velocity commands (e.g., for safety intervention or hybrid manual/autonomous control), use the `navigation_with_mux.launch.py` launch file:
+
+```bash
+ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml
+```
+
+This launch file includes a `cmd_vel_mux` node that sits between Nav2 and the robot driver. You can pause/resume Nav2 commands using a service:
+
+```bash
+# Pause Nav2 commands (robot stops responding to Nav2 goals)
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: false}"
+
+# Resume Nav2 commands
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: true}"
+```
+
+You can also start with Nav2 commands disabled:
+
+```bash
+ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml nav2_enabled:=false
+```
+
+When Nav2 commands are paused, you can still teleoperate the robot using the joystick controller.
+
 ### Teleop using a Joystick Controller
 
 The launch files expose the launch argument "teleop_type". By default, this argument is set to "joystick", which launches joystick teleop in the terminal with the xbox controller that ships with Stretch RE1. The xbox controller utilizes a dead man's switch safety feature to avoid unintended movement of the robot. This is the switch located on the front left side of the controller marked "LB". Keep this switch pressed and translate or rotate the base using the joystick located on the right side of the xbox controller.

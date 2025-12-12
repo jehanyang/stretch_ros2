@@ -1022,6 +1022,12 @@ class StretchMujocoDriver(Node):
         response.success = success
         response.message = message
         return response
+    
+    def camera_along_arm_service_callback(self, request, response):
+        raise NotImplementedError("Moving camera not implemented")
+    
+    def camera_along_base_service_callback(self, request, response):
+        raise NotImplementedError("Moving camera not implemented")
 
     def get_joint_states_callback(self, request, response):
         joint_limits = JointState()
