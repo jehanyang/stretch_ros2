@@ -50,12 +50,17 @@ ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/
 This launch file includes a `cmd_vel_mux` node that sits between Nav2 and the robot driver. You can pause/resume Nav2 commands using a service:
 
 ```bash
-# Pause Nav2 commands (robot stops responding to Nav2 goals)
+# Pause Nav2 commands (cancels the current goal, saves it for later)
 ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: false}"
 
-# Resume Nav2 commands
+# Resume Nav2 commands (resends the saved goal)
 ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: true}"
 ```
+
+When you pause navigation:
+- The current Nav2 goal is cancelled (preventing "failed to make progress" errors)
+- The goal pose is saved
+- When you resume, the saved goal is automatically resent to Nav2
 
 You can also start with Nav2 commands disabled:
 
@@ -64,6 +69,71 @@ ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/
 ```
 
 When Nav2 commands are paused, you can still teleoperate the robot using the joystick controller.
+
+### Room Navigator
+
+The `room_navigator.launch.py` provides a simple way to navigate to predefined room locations using services. It includes the pause/resume functionality from `navigation_with_mux.launch.py`.
+
+```bash
+ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml
+```
+
+This launches navigation with two services for predefined locations:
+
+```bash
+# Navigate to the kitchen
+ros2 service call /go_to_kitchen std_srvs/srv/Trigger
+
+# Navigate to the bedroom
+ros2 service call /go_to_bedroom std_srvs/srv/Trigger
+```
+
+The services block until navigation completes and return success/failure. You can also pause/resume navigation:
+
+```bash
+# Pause navigation
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: false}"
+
+# Resume navigation (resends the saved goal)
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: true}"
+```
+
+Room locations can be customized by editing the `rooms` dictionary in `stretch_nav2/room_navigator.py`.
+
+### Running in Simulation
+
+To run navigation in the MuJoCo simulator, open three terminals and run:
+
+**Terminal 1 - Launch the simulator:**
+```bash
+ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=navigation
+```
+
+**Terminal 2 - Launch navigation with the mux:**
+```bash
+ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=true teleop_type:=none
+```
+
+**Terminal 3 - Launch the room navigator:**
+```bash
+ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=false
+```
+
+Then use the following service calls to control navigation:
+
+```bash
+# Navigate to the kitchen
+ros2 service call /go_to_kitchen std_srvs/srv/Trigger
+
+# Navigate to the bedroom
+ros2 service call /go_to_bedroom std_srvs/srv/Trigger
+
+# Pause navigation
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: false}"
+
+# Resume navigation
+ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: true}"
+```
 
 ### Teleop using a Joystick Controller
 

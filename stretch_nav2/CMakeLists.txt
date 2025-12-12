@@ -35,6 +35,7 @@ ament_python_install_package(${PROJECT_NAME})
 install(PROGRAMS
   stretch_nav2/simple_commander_demo.py
   stretch_nav2/cmd_vel_mux.py
+  stretch_nav2/room_navigator.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
