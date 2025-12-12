@@ -119,7 +119,7 @@ ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/
 ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=false
 ```
 
-Then use the following service calls to control navigation:
+Then use service calls to start navigation and the `/nav_control` topic to control movement:
 
 ```bash
 # Navigate to the kitchen
@@ -127,13 +127,38 @@ ros2 service call /go_to_kitchen std_srvs/srv/Trigger
 
 # Navigate to the bedroom
 ros2 service call /go_to_bedroom std_srvs/srv/Trigger
-
-# Pause navigation
-ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: false}"
-
-# Resume navigation
-ros2 service call /cmd_vel_mux/enable std_srvs/srv/SetBool "{data: true}"
 ```
+
+The `/nav_control` topic accepts a `Float32MultiArray` with 4 values: `[forward, left, right, back]`:
+- **forward** (0.0-1.0): Scale Nav2's velocity along the planned path
+- **left** (0.0-1.0): Add left turning while moving
+- **right** (0.0-1.0): Add right turning while moving
+- **back** (0.0-1.0): Override with backward movement (ignores Nav2)
+- **All zeros**: Stop and cancel the Nav2 goal
+
+**Important**: Use `--rate` to publish continuously (the mux times out after 0.5s without messages):
+
+```bash
+# Move forward along Nav2's planned path at full speed (10 Hz)
+ros2 topic pub --rate 10 /nav_control std_msgs/msg/Float32MultiArray '{data: [1.0, 0.0, 0.0, 0.0]}'
+
+# Move forward at half speed
+ros2 topic pub --rate 10 /nav_control std_msgs/msg/Float32MultiArray '{data: [0.5, 0.0, 0.0, 0.0]}'
+
+# Turn left while moving forward
+ros2 topic pub --rate 10 /nav_control std_msgs/msg/Float32MultiArray '{data: [0.5, 0.5, 0.0, 0.0]}'
+
+# Turn right while moving forward
+ros2 topic pub --rate 10 /nav_control std_msgs/msg/Float32MultiArray '{data: [0.5, 0.0, 0.5, 0.0]}'
+
+# Back up (ignores Nav2 path)
+ros2 topic pub --rate 10 /nav_control std_msgs/msg/Float32MultiArray '{data: [0.0, 0.0, 0.0, 1.0]}'
+
+# Stop and cancel Nav2 goal (single publish is fine for stop)
+ros2 topic pub /nav_control std_msgs/msg/Float32MultiArray '{data: [0.0, 0.0, 0.0, 0.0]}'
+```
+
+When you stop publishing (or send all zeros), the Nav2 goal is cancelled. When you start publishing non-zero values again, the saved goal is automatically resent to Nav2.
 
 ### Teleop using a Joystick Controller
 

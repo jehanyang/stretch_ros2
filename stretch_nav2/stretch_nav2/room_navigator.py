@@ -29,11 +29,12 @@ class RoomNavigator(Node):
     def __init__(self):
         super().__init__('room_navigator')
 
-        # Define room locations
+        # Define room locations with orientations (quaternion z, w components)
         # TODO: Update these coordinates based on your map
+        # Orientation: (z=0, w=1) = face +X, (z=0.707, w=0.707) = face +Y, (z=-0.707, w=0.707) = face -Y
         self.rooms = {
-            'kitchen': {'x': 1.60, 'y': -1.40},
-            'bedroom': {'x': 1.60, 'y': -4.40},
+            'kitchen': {'x': 1.60, 'y': -1.40, 'qz': 0.707, 'qw': 0.707},   # Face +Y
+            'bedroom': {'x': 1.60, 'y': -4.40, 'qz': -0.707, 'qw': 0.707},  # Face -Y
         }
 
         # Use reentrant callback group for concurrent service calls
@@ -76,8 +77,8 @@ class RoomNavigator(Node):
         self.get_logger().info(f'  Kitchen: ({self.rooms["kitchen"]["x"]}, {self.rooms["kitchen"]["y"]})')
         self.get_logger().info(f'  Bedroom: ({self.rooms["bedroom"]["x"]}, {self.rooms["bedroom"]["y"]})')
 
-    def create_pose(self, x: float, y: float) -> PoseStamped:
-        """Create a PoseStamped message for the given coordinates."""
+    def create_pose(self, x: float, y: float, qz: float = 0.0, qw: float = 1.0) -> PoseStamped:
+        """Create a PoseStamped message for the given coordinates and orientation."""
         pose = PoseStamped()
         pose.header.frame_id = 'map'
         pose.header.stamp = self.get_clock().now().to_msg()
@@ -86,8 +87,8 @@ class RoomNavigator(Node):
         pose.pose.position.z = 0.0
         pose.pose.orientation.x = 0.0
         pose.pose.orientation.y = 0.0
-        pose.pose.orientation.z = 0.0
-        pose.pose.orientation.w = 1.0
+        pose.pose.orientation.z = qz
+        pose.pose.orientation.w = qw
         return pose
 
     def goal_response_callback(self, future):
@@ -119,7 +120,7 @@ class RoomNavigator(Node):
                 return False, 'NavigateToPose action server not available'
 
             room = self.rooms[room_name]
-            pose = self.create_pose(room['x'], room['y'])
+            pose = self.create_pose(room['x'], room['y'], room.get('qz', 0.0), room.get('qw', 1.0))
 
             # Publish goal pose for cmd_vel_mux to track
             self.goal_pose_pub.publish(pose)
