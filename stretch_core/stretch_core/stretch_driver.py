@@ -72,7 +72,7 @@ class StretchDriver(Node):
 
         self.robot_mode_rwlock = RWLock()
         self.robot_mode = None
-        self.control_modes = ['position', 'navigation', 'trajectory', 'gamepad']
+        self.control_modes = ['position', 'navigation', 'trajectory', 'gamepad', 'room_navigation']
         self.prev_runstop_state = None # helps track if runstop state has changed
 
         # manages when `robot.push_command()` is called
@@ -105,8 +105,8 @@ class StretchDriver(Node):
 
     def set_mobile_base_velocity_callback(self, twist):
         self.robot_mode_rwlock.acquire_read()
-        if self.robot_mode != 'navigation':
-            self.get_logger().error('{0} action server must be in navigation mode to '
+        if self.robot_mode not in ['navigation', 'room_navigation']:
+            self.get_logger().error('{0} action server must be in navigation or room_navigation mode to '
                                     'receive a twist on cmd_vel. '
                                     'Current mode = {1}.'.format(self.node_name, self.robot_mode))
             self.robot_mode_rwlock.release_read()
@@ -192,7 +192,7 @@ class StretchDriver(Node):
             self.gamepad_teleop.update_gamepad_state(self.robot) # Update gamepad input readings within gamepad_teleop instance
         
         # Set new mobile base velocities
-        if self.robot_mode == 'navigation':
+        if self.robot_mode in ['navigation', 'room_navigation']:
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
             if time_since_last_twist < self.timeout:
                 self.robot.base.set_velocity(self.linear_velocity_mps, self.angular_velocity_radps)
@@ -670,7 +670,17 @@ class StretchDriver(Node):
 
         self.change_mode('gamepad', code_to_run)
         return True, 'Now in gamepad mode.'
-    
+
+    def turn_on_room_navigation_mode(self):
+        # Room navigation mode is similar to navigation mode but intended
+        # for use with cmd_vel_mux which provides directional control over
+        # Nav2 velocity commands.
+        def code_to_run():
+            self.linear_velocity_mps = 0.0
+            self.angular_velocity_radps = 0.0
+        self.change_mode('room_navigation', code_to_run)
+        return True, 'Now in room_navigation mode.'
+
     def activate_streaming_position(self, request):
         self.streaming_position_activated = True
         self.get_logger().info('Activated streaming position.')
@@ -737,6 +747,12 @@ class StretchDriver(Node):
 
     def gamepad_mode_service_callback(self, request, response):
         success, message = self.turn_on_gamepad_mode()
+        response.success = success
+        response.message = message
+        return response
+
+    def room_navigation_mode_service_callback(self, request, response):
+        success, message = self.turn_on_room_navigation_mode()
         response.success = success
         response.message = message
         return response
@@ -1077,7 +1093,12 @@ class StretchDriver(Node):
                                                                     '/switch_to_gamepad_mode',
                                                                     self.gamepad_mode_service_callback,
                                                                     callback_group=self.main_group)
-    
+
+        self.switch_to_room_navigation_mode_service = self.create_service(Trigger,
+                                                                    '/switch_to_room_navigation_mode',
+                                                                    self.room_navigation_mode_service_callback,
+                                                                    callback_group=self.main_group)
+
         self.activate_streaming_position_service = self.create_service(Trigger,
                                                                 '/activate_streaming_position',
                                                                 self.activate_streaming_position_service_callback,

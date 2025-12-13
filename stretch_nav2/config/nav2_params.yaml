@@ -119,14 +119,14 @@ controller_server:
     # Progress checker parameters
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
-      required_movement_radius: 0.3
-      movement_time_allowance: 30.0
+      required_movement_radius: 0.1
+      movement_time_allowance: 60.0
     
     general_goal_checker:
       stateful: True
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.25
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.10
+      yaw_goal_tolerance: 0.10
     # DWB parameters
     FollowPath:
       plugin: "dwb_core::DWBLocalPlanner"
@@ -152,22 +152,22 @@ controller_server:
       linear_granularity: 0.05
       angular_granularity: 0.025
       transform_tolerance: 0.2
-      xy_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.10
       trans_stopped_velocity: 0.25
       short_circuit_trajectory_evaluation: True
       stateful: True
       critics: ["RotateToGoal", "Oscillation", "BaseObstacle", "GoalAlign", "PathAlign", "PathDist", "GoalDist", "PreferForward"]
       BaseObstacle.scale: 0.02
-      PathAlign.scale: 32.0
-      PathAlign.forward_point_distance: 0.1
-      GoalAlign.scale: 24.0
-      GoalAlign.forward_point_distance: 0.1
-      PathDist.scale: 32.0
+      PathAlign.scale: 512.0
+      PathAlign.forward_point_distance: 0.3
+      GoalAlign.scale: 48.0
+      GoalAlign.forward_point_distance: 0.3
+      PathDist.scale: 256.0
       GoalDist.scale: 24.0
       RotateToGoal.scale: 32.0
       RotateToGoal.slowing_factor: 5.0
       RotateToGoal.lookahead_time: -1.0
-      PreferForward.penalty: 2.0
+      PreferForward.penalty: 4.0
 
 local_costmap:
   local_costmap:

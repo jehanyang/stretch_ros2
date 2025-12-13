@@ -32,7 +32,7 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import Twist, PoseStamped
-from std_msgs.msg import Float32MultiArray
+from std_msgs.msg import Float32MultiArray, String
 from std_srvs.srv import Trigger
 from nav2_msgs.action import NavigateToPose
 from action_msgs.srv import CancelGoal
@@ -76,6 +76,20 @@ class CmdVelMux(Node):
         # Saved goal for resume functionality
         self.saved_goal_pose = None
         self.behavior_tree = ''
+        self.last_goal_send_time = None  # Track when we last sent a goal
+        self.goal_resend_interval = 1.0  # seconds
+
+        # Robot mode tracking
+        self.robot_mode = None
+        self.required_mode = 'room_navigation'
+
+        # Subscriber for robot mode
+        self.mode_sub = self.create_subscription(
+            String,
+            'mode',
+            self.mode_callback,
+            10
+        )
 
         # Subscriber for Nav2 cmd_vel
         self.nav2_sub = self.create_subscription(
@@ -141,6 +155,12 @@ class CmdVelMux(Node):
             f'Control topic: {control_topic} [forward, left, right, back]'
         )
 
+    def mode_callback(self, msg: String):
+        """Track the current robot mode."""
+        if self.robot_mode != msg.data:
+            self.get_logger().info(f'Robot mode changed: {self.robot_mode} -> {msg.data}')
+        self.robot_mode = msg.data
+
     def nav2_cmd_vel_callback(self, msg: Twist):
         """Store the latest Nav2 cmd_vel."""
         self.nav2_cmd_vel = msg
@@ -175,6 +195,10 @@ class CmdVelMux(Node):
 
     def publish_cmd_vel(self):
         """Publish cmd_vel based on current control state."""
+        # Only process commands if in room_navigation mode
+        if self.robot_mode != self.required_mode:
+            return
+
         # Check for timeout - only if we have received a control message before
         if self.last_control_time is not None:
             time_since_last = (self.get_clock().now() - self.last_control_time).nanoseconds / 1e9
@@ -184,6 +208,14 @@ class CmdVelMux(Node):
                     self.cancel_nav2_goal()
                     self.is_stopped = True
                 self.control = [0.0, 0.0, 0.0, 0.0]
+
+        # Resend goal every 1 second while moving to reset progress checker
+        if not self.is_stopped and self.saved_goal_pose is not None:
+            now = self.get_clock().now()
+            if self.last_goal_send_time is None or \
+               (now - self.last_goal_send_time).nanoseconds / 1e9 > self.goal_resend_interval:
+                self.send_nav2_goal(self.saved_goal_pose)
+                self.last_goal_send_time = now
 
         forward, left, right, back = self.control
 
@@ -216,6 +248,11 @@ class CmdVelMux(Node):
         """Track the current navigation goal."""
         self.saved_goal_pose = msg
         self.get_logger().info(f'Saved goal pose: ({msg.pose.position.x:.2f}, {msg.pose.position.y:.2f})')
+
+        # Send the goal to Nav2 if we're not stopped
+        if not self.is_stopped:
+            self.get_logger().info('Sending new goal to Nav2')
+            self.send_nav2_goal(msg)
 
         # Stow the robot when a new goal is received
         if self.stow_on_goal:

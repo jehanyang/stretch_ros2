@@ -106,7 +106,7 @@ To run navigation in the MuJoCo simulator, open three terminals and run:
 
 **Terminal 1 - Launch the simulator:**
 ```bash
-ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=navigation
+ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=room_navigation
 ```
 
 **Terminal 2 - Launch navigation with the mux:**
@@ -127,6 +127,12 @@ ros2 service call /go_to_kitchen std_srvs/srv/Trigger
 
 # Navigate to the bedroom
 ros2 service call /go_to_bedroom std_srvs/srv/Trigger
+```
+
+**Note**: The `cmd_vel_mux` only processes commands when the robot is in `room_navigation` mode. The simulator is launched with `mode:=room_navigation` above. On a real robot, switch modes with:
+
+```bash
+ros2 service call /switch_to_room_navigation_mode std_srvs/srv/Trigger
 ```
 
 The `/nav_control` topic accepts a `Float32MultiArray` with 4 values: `[forward, left, right, back]`:
