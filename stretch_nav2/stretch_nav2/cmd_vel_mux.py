@@ -53,6 +53,7 @@ class CmdVelMux(Node):
         self.declare_parameter('control_topic', '/nav_control')
         self.declare_parameter('stow_on_goal', True)
         self.declare_parameter('backup_speed', 0.1)  # m/s for backward movement
+        self.declare_parameter('forward_speed', 0.1)  # m/s for forward movement when no Nav2 goal
         self.declare_parameter('turn_speed', 0.5)    # rad/s for left/right turning
         self.declare_parameter('nav2_angular_scale', 2.0)  # multiplier for Nav2's angular velocity
 
@@ -61,6 +62,7 @@ class CmdVelMux(Node):
         control_topic = self.get_parameter('control_topic').get_parameter_value().string_value
         self.stow_on_goal = self.get_parameter('stow_on_goal').get_parameter_value().bool_value
         self.backup_speed = self.get_parameter('backup_speed').get_parameter_value().double_value
+        self.forward_speed = self.get_parameter('forward_speed').get_parameter_value().double_value
         self.turn_speed = self.get_parameter('turn_speed').get_parameter_value().double_value
         self.nav2_angular_scale = self.get_parameter('nav2_angular_scale').get_parameter_value().double_value
 
@@ -182,8 +184,10 @@ class CmdVelMux(Node):
             self.cancel_nav2_goal()
             self.is_stopped = True
         elif not all_zero and self.is_stopped:
-            # Transition from stopped to moving - resend goal
+            # Transition from stopped to moving - stow robot and resend goal
             self.is_stopped = False
+            if self.stow_on_goal:
+                self.stow_robot()
             if self.saved_goal_pose is not None:
                 self.get_logger().info('Resuming: resending Nav2 goal')
                 self.send_nav2_goal(self.saved_goal_pose)
@@ -226,12 +230,20 @@ class CmdVelMux(Node):
             output.linear.x = -self.backup_speed * back
             output.angular.z = 0.0
         elif forward > 0.0 or left > 0.0 or right > 0.0:
-            # Scale Nav2's linear velocity by forward (or by turn magnitude)
-            forward_scale = forward if forward > 0.0 else max(0.3, 1.0 - (left + right) * 0.5)
-            output.linear.x = self.nav2_cmd_vel.linear.x * forward_scale
+            # Check if Nav2 is providing velocity commands
+            nav2_has_velocity = abs(self.nav2_cmd_vel.linear.x) > 0.001 or abs(self.nav2_cmd_vel.angular.z) > 0.001
 
-            # Start with Nav2's angular velocity scaled (with additional nav2_angular_scale multiplier)
-            output.angular.z = self.nav2_cmd_vel.angular.z * forward_scale * self.nav2_angular_scale
+            if nav2_has_velocity:
+                # Scale Nav2's linear velocity by forward (or by turn magnitude)
+                forward_scale = forward if forward > 0.0 else max(0.3, 1.0 - (left + right) * 0.5)
+                output.linear.x = self.nav2_cmd_vel.linear.x * forward_scale
+                # Start with Nav2's angular velocity scaled (with additional nav2_angular_scale multiplier)
+                output.angular.z = self.nav2_cmd_vel.angular.z * forward_scale * self.nav2_angular_scale
+            else:
+                # No Nav2 goal - use manual forward speed
+                if forward > 0.0:
+                    output.linear.x = self.forward_speed * forward
+                output.angular.z = 0.0
 
             # Add turning from left/right
             if left > 0.0:

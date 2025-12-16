@@ -102,11 +102,33 @@ Room locations can be customized by editing the `rooms` dictionary in `stretch_n
 
 ### Running in Simulation
 
-To run navigation in the MuJoCo simulator, open three terminals and run:
+To run room navigation in the MuJoCo simulator with driver assistance, use the combined launch file:
+
+```bash
+ros2 launch stretch_nav2 sim_room_navigation.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml
+```
+
+This single command launches:
+- MuJoCo simulation environment
+- Multi-goal control (da_sim)
+- Driver assistance with shared control (da_core)
+- Navigation with cmd_vel mux
+- Room navigator
+
+Optional arguments:
+- `use_rviz:=true/false` (default: true)
+- `use_mujoco_viewer:=true/false` (default: true)
+- `shared:=true/false` (default: true) - Enable shared control
+- `robocasa_layout:=<layout>` (default: Random)
+- `robocasa_style:=<style>` (default: Random)
+
+#### Manual Launch (Alternative)
+
+If you prefer to launch components separately, open three terminals and run:
 
 **Terminal 1 - Launch the simulator:**
 ```bash
-ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=room_navigation
+ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=navigation
 ```
 
 **Terminal 2 - Launch navigation with the mux:**
