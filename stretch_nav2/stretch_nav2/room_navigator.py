@@ -33,8 +33,8 @@ class RoomNavigator(Node):
         # TODO: Update these coordinates based on your map
         # Orientation: (z=0, w=1) = face +X, (z=0.707, w=0.707) = face +Y, (z=-0.707, w=0.707) = face -Y
         self.rooms = {
-            'kitchen': {'x': 1.60, 'y': -1.40, 'qz': 0.707, 'qw': 0.707},   # Face +Y
-            'bedroom': {'x': 1.60, 'y': -4.40, 'qz': -0.707, 'qw': 0.707},  # Face -Y
+            'kitchen': {'x': 0.73, 'y': -1.40, 'qz': -0.707, 'qw': 0.707},   # Face -Y
+            'bedroom': {'x': -0.80, 'y': 6.933, 'qz': 0.707, 'qw': 0.707},  # Face +Y
         }
 
         # Use reentrant callback group for concurrent service calls
