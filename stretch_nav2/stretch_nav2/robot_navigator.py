@@ -79,6 +79,8 @@ class BasicNavigator(Node):
         self.initial_pose_pub = self.create_publisher(PoseWithCovarianceStamped,
                                                       'initialpose',
                                                       10)
+        # Publish current goal pose for cmd_vel_mux to track
+        self.goal_pose_pub = self.create_publisher(PoseStamped, '/goal_pose', 10)
         self.change_maps_srv = self.create_client(LoadMap, '/map_server/load_map')
         self.clear_costmap_global_srv = self.create_client(
             ClearEntireCostmap, '/global_costmap/clear_entirely_global_costmap')
@@ -117,6 +119,10 @@ class BasicNavigator(Node):
         goal_msg.poses = poses
         goal_msg.behavior_tree = behavior_tree
 
+        # Publish the final goal pose for cmd_vel_mux to track
+        if poses:
+            self.goal_pose_pub.publish(poses[-1])
+
         self.info(f'Navigating with {len(goal_msg.poses)} goals....')
         send_goal_future = self.nav_through_poses_client.send_goal_async(goal_msg,
                                                                          self._feedbackCallback)
@@ -139,6 +145,9 @@ class BasicNavigator(Node):
         goal_msg = NavigateToPose.Goal()
         goal_msg.pose = pose
         goal_msg.behavior_tree = behavior_tree
+
+        # Publish the goal pose for cmd_vel_mux to track
+        self.goal_pose_pub.publish(pose)
 
         self.info('Navigating to goal: ' + str(pose.pose.position.x) + ' ' +
                   str(pose.pose.position.y) + '...')
@@ -163,6 +172,10 @@ class BasicNavigator(Node):
 
         goal_msg = FollowWaypoints.Goal()
         goal_msg.poses = poses
+
+        # Publish the final goal pose for cmd_vel_mux to track
+        if poses:
+            self.goal_pose_pub.publish(poses[-1])
 
         self.info(f'Following {len(goal_msg.poses)} goals....')
         send_goal_future = self.follow_waypoints_client.send_goal_async(goal_msg,

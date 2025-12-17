@@ -225,7 +225,7 @@ class StretchMujocoDriver(Node):
 
         self.robot_mode_rwlock = RWLock()
         self.robot_mode = None
-        self.control_modes = ["position", "navigation", "trajectory", "gamepad"]
+        self.control_modes = ["position", "navigation", "trajectory", "gamepad", "room_navigation"]
         self.prev_runstop_state = None  # helps track if runstop state has changed
 
         self.voltage_history = []
@@ -258,16 +258,17 @@ class StretchMujocoDriver(Node):
 
     def set_mobile_base_velocity_callback(self, twist):
         self.robot_mode_rwlock.acquire_read()
-        if self.robot_mode != "navigation":
+        if self.robot_mode not in ["navigation", "room_navigation"]:
             self.get_logger().error(
-                "{0} action server must be in navigation mode to "
+                "{0} action server must be in navigation or room_navigation mode to "
                 "receive a twist on cmd_vel. "
                 "Current mode = {1}.".format(self.node_name, self.robot_mode)
             )
             self.robot_mode_rwlock.release_read()
             return
-        self.linear_velocity_mps = twist.linear.x
-        self.angular_velocity_radps = twist.angular.z
+        # Apply velocity scaling to compensate for simulation limitations
+        self.linear_velocity_mps = twist.linear.x * self.base_velocity_scale
+        self.angular_velocity_radps = twist.angular.z * self.base_velocity_scale
         self.last_twist_time = self.get_clock().now()
         self.robot_mode_rwlock.release_read()
 
@@ -281,9 +282,9 @@ class StretchMujocoDriver(Node):
             self.robot_mode_rwlock.release_read()
             return
 
-        if not self.robot_mode in ["position", "navigation"]:
+        if not self.robot_mode in ["position", "navigation", "room_navigation"]:
             self.get_logger().error(
-                "{0} must be in position or navigation mode with streaming_position activated "
+                "{0} must be in position, navigation, or room_navigation mode with streaming_position activated "
                 "enabled to receive command to joint_position_cmd. "
                 "Current mode = {1}.".format(self.node_name, self.robot_mode)
             )
@@ -390,7 +391,7 @@ class StretchMujocoDriver(Node):
                             f"{actuator} failed to move to {self.sim.data_proxies.get_command().move_to[actuator.name]}"
                         )
 
-            self.get_logger().info(f"Moved to position qpos: {qpos}")
+            self.get_logger().info(f"Moved to position qpos: {qpos}", throttle_duration_sec=5.0)
         except Exception as e:
             self.get_logger().error("Failed to move to position: {0}".format(e))
 
@@ -411,7 +412,7 @@ class StretchMujocoDriver(Node):
         #     self.gamepad_teleop.update_gamepad_state(self.robot) # Update gamepad input readings within gamepad_teleop instance
 
         # Set new mobile base velocities
-        if self.robot_mode == "navigation":
+        if self.robot_mode in ["navigation", "room_navigation"]:
             time_since_last_twist = self.get_clock().now() - self.last_twist_time
             if time_since_last_twist < self.timeout:
                 self.sim.set_base_velocity(
@@ -935,6 +936,17 @@ class StretchMujocoDriver(Node):
         self.change_mode("gamepad", code_to_run)
         return True, "Now in gamepad mode."
 
+    def turn_on_room_navigation_mode(self):
+        # Room navigation mode is similar to navigation mode but intended
+        # for use with cmd_vel_mux which provides directional control over
+        # Nav2 velocity commands.
+        def code_to_run():
+            self.linear_velocity_mps = 0.0
+            self.angular_velocity_radps = 0.0
+
+        self.change_mode("room_navigation", code_to_run)
+        return True, "Now in room_navigation mode."
+
     def activate_streaming_position(self, request):
         self.streaming_position_activated = True
         self.get_logger().info("Activated streaming position.")
@@ -1004,6 +1016,12 @@ class StretchMujocoDriver(Node):
         response.message = message
         return response
 
+    def room_navigation_mode_service_callback(self, request, response):
+        success, message = self.turn_on_room_navigation_mode()
+        response.success = success
+        response.message = message
+        return response
+
     def runstop_service_callback(self, request, response):
         self.get_logger().info("Received runstop_the_robot service call.")
         self.runstop_the_robot(request.data)
@@ -1021,6 +1039,30 @@ class StretchMujocoDriver(Node):
         success, message = self.deactivate_streaming_position(request)
         response.success = success
         response.message = message
+        return response
+    
+    def camera_along_arm_service_callback(self, request, response):
+        """Move camera to point along the arm direction."""
+        self.sim.move_to(Actuators.head_pan, -1.65)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along arm."
+        return response
+
+    def camera_along_base_service_callback(self, request, response):
+        """Move camera to point along the base (forward) direction."""
+        self.sim.move_to(Actuators.head_pan, 0.0)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along base."
+        return response
+
+    def camera_along_base_backward_service_callback(self, request, response):
+        """Move camera to point along the base backward direction."""
+        self.sim.move_to(Actuators.head_pan, -3.14)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along base backward."
         return response
 
     def get_joint_states_callback(self, request, response):
@@ -1238,6 +1280,11 @@ class StretchMujocoDriver(Node):
         self.linear_velocity_mps = 0.0  # m/s ROS SI standard for cmd_vel (REP 103)
         self.angular_velocity_radps = 0.0  # rad/s ROS SI standard for cmd_vel (REP 103)
 
+        # Base velocity scaling for simulation (can adjust if sim feels slower than real robot)
+        self.declare_parameter('base_velocity_scale', 1.0)
+        self.base_velocity_scale = self.get_parameter('base_velocity_scale').value
+        self.get_logger().info(f'Base velocity scale: {self.base_velocity_scale}')
+
         self.max_arm_height = 1.1
 
         self.odom_pub = self.create_publisher(Odometry, "odom", 1)
@@ -1423,6 +1470,13 @@ class StretchMujocoDriver(Node):
             callback_group=self.main_group,
         )
 
+        self.switch_to_room_navigation_mode_service = self.create_service(
+            Trigger,
+            "/switch_to_room_navigation_mode",
+            self.room_navigation_mode_service_callback,
+            callback_group=self.main_group,
+        )
+
         self.activate_streaming_position_service = self.create_service(
             Trigger,
             "/activate_streaming_position",
@@ -1483,6 +1537,27 @@ class StretchMujocoDriver(Node):
             Trigger,
             "/clear_world_frames",
             self.clear_mujoco_world_frames_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_arm_service = self.create_service(
+            Trigger,
+            "/camera_along_arm",
+            self.camera_along_arm_service_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_base_service = self.create_service(
+            Trigger,
+            "/camera_along_base",
+            self.camera_along_base_service_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_base_backward_service = self.create_service(
+            Trigger,
+            "/camera_along_base_backward",
+            self.camera_along_base_backward_service_callback,
             callback_group=self.main_group,
         )
 
