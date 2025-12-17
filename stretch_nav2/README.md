@@ -124,21 +124,26 @@ Optional arguments:
 
 #### Manual Launch (Alternative)
 
-If you prefer to launch components separately, open three terminals and run:
+If you prefer to launch components separately, open four terminals and run:
 
 **Terminal 1 - Launch the simulator:**
 ```bash
 ros2 launch stretch_simulation stretch_mujoco_driver.launch.py use_mujoco_viewer:=true use_rviz:=false mode:=navigation
 ```
 
-**Terminal 2 - Launch navigation with the mux:**
+**Terminal 2 - Launch multi-goal control (da_sim):**
 ```bash
-ros2 launch stretch_nav2 navigation_with_mux.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=true teleop_type:=none
+ros2 launch da_sim multi_goal_ctrl.launch.py
 ```
 
-**Terminal 3 - Launch the room navigator:**
+**Terminal 3 - Launch driver assistance (da_core):**
 ```bash
-ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=false
+ros2 launch da_core driver_assistance.launch.py shared:=true
+```
+
+**Terminal 4 - Launch room navigator (includes navigation with mux):**
+```bash
+ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml use_sim_time:=true use_rviz:=true teleop_type:=none
 ```
 
 Then use service calls to start navigation and the `/nav_control` topic to control movement:

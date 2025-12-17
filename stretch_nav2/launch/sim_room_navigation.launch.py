@@ -5,8 +5,7 @@ This launch file starts all components needed for room navigation in MuJoCo simu
 1. MuJoCo simulation (stretch_mujoco_driver)
 2. Multi-goal control (da_sim)
 3. Driver assistance with shared control (da_core)
-4. Navigation with cmd_vel mux (stretch_nav2)
-5. Room navigator (stretch_nav2)
+4. Room navigator with navigation and cmd_vel mux (stretch_nav2)
 
 Usage:
     ros2 launch stretch_nav2 sim_room_navigation.launch.py map:=${HELLO_FLEET_PATH}/maps/<map_name>.yaml
@@ -100,27 +99,9 @@ def generate_launch_description():
         }.items()
     )
 
-    # 4. Navigation with mux - delayed to allow simulation to start
-    navigation_launch = TimerAction(
-        period=3.0,  # Wait 3 seconds for simulation to initialize
-        actions=[
-            IncludeLaunchDescription(
-                PythonLaunchDescriptionSource([
-                    stretch_nav2_path, '/launch/navigation_with_mux.launch.py'
-                ]),
-                launch_arguments={
-                    'map': LaunchConfiguration('map'),
-                    'use_sim_time': 'true',
-                    'use_rviz': LaunchConfiguration('use_rviz'),
-                    'teleop_type': 'none',
-                }.items()
-            )
-        ]
-    )
-
-    # 5. Room navigator - delayed slightly more
+    # 4. Room navigator (includes navigation_with_mux) - delayed to allow simulation to start
     room_navigator_launch = TimerAction(
-        period=4.0,  # Wait 4 seconds
+        period=3.0,  # Wait 3 seconds for simulation to initialize
         actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource([
@@ -129,7 +110,7 @@ def generate_launch_description():
                 launch_arguments={
                     'map': LaunchConfiguration('map'),
                     'use_sim_time': 'true',
-                    'use_rviz': 'false',  # Already launched by navigation_with_mux
+                    'use_rviz': LaunchConfiguration('use_rviz'),
                     'teleop_type': 'none',
                 }.items()
             )
@@ -146,6 +127,5 @@ def generate_launch_description():
         mujoco_launch,
         multi_goal_ctrl_launch,
         driver_assistance_launch,
-        navigation_launch,
         room_navigator_launch,
     ])
