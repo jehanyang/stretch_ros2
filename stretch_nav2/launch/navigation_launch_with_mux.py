@@ -101,6 +101,8 @@ def generate_launch_description():
             description='Whether Nav2 cmd_vel forwarding is initially enabled'),
 
         # Cmd vel mux - gates Nav2 commands to stretch_driver
+        # Note: use_sim_time intentionally not set - using wall clock for acceleration limiting
+        # to avoid glitches when sim time is inconsistent
         Node(
             package='stretch_nav2',
             executable='cmd_vel_mux.py',

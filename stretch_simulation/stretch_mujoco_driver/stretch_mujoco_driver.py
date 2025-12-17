@@ -266,8 +266,9 @@ class StretchMujocoDriver(Node):
             )
             self.robot_mode_rwlock.release_read()
             return
-        self.linear_velocity_mps = twist.linear.x
-        self.angular_velocity_radps = twist.angular.z
+        # Apply velocity scaling to compensate for simulation limitations
+        self.linear_velocity_mps = twist.linear.x * self.base_velocity_scale
+        self.angular_velocity_radps = twist.angular.z * self.base_velocity_scale
         self.last_twist_time = self.get_clock().now()
         self.robot_mode_rwlock.release_read()
 
@@ -281,9 +282,9 @@ class StretchMujocoDriver(Node):
             self.robot_mode_rwlock.release_read()
             return
 
-        if not self.robot_mode in ["position", "navigation"]:
+        if not self.robot_mode in ["position", "navigation", "room_navigation"]:
             self.get_logger().error(
-                "{0} must be in position or navigation mode with streaming_position activated "
+                "{0} must be in position, navigation, or room_navigation mode with streaming_position activated "
                 "enabled to receive command to joint_position_cmd. "
                 "Current mode = {1}.".format(self.node_name, self.robot_mode)
             )
@@ -390,7 +391,7 @@ class StretchMujocoDriver(Node):
                             f"{actuator} failed to move to {self.sim.data_proxies.get_command().move_to[actuator.name]}"
                         )
 
-            self.get_logger().info(f"Moved to position qpos: {qpos}")
+            self.get_logger().info(f"Moved to position qpos: {qpos}", throttle_duration_sec=5.0)
         except Exception as e:
             self.get_logger().error("Failed to move to position: {0}".format(e))
 
@@ -1041,10 +1042,28 @@ class StretchMujocoDriver(Node):
         return response
     
     def camera_along_arm_service_callback(self, request, response):
-        raise NotImplementedError("Moving camera not implemented")
-    
+        """Move camera to point along the arm direction."""
+        self.sim.move_to(Actuators.head_pan, -1.65)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along arm."
+        return response
+
     def camera_along_base_service_callback(self, request, response):
-        raise NotImplementedError("Moving camera not implemented")
+        """Move camera to point along the base (forward) direction."""
+        self.sim.move_to(Actuators.head_pan, 0.0)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along base."
+        return response
+
+    def camera_along_base_backward_service_callback(self, request, response):
+        """Move camera to point along the base backward direction."""
+        self.sim.move_to(Actuators.head_pan, -3.14)
+        self.sim.move_to(Actuators.head_tilt, -0.6)
+        response.success = True
+        response.message = "Moved camera along base backward."
+        return response
 
     def get_joint_states_callback(self, request, response):
         joint_limits = JointState()
@@ -1260,6 +1279,11 @@ class StretchMujocoDriver(Node):
 
         self.linear_velocity_mps = 0.0  # m/s ROS SI standard for cmd_vel (REP 103)
         self.angular_velocity_radps = 0.0  # rad/s ROS SI standard for cmd_vel (REP 103)
+
+        # Base velocity scaling for simulation (can adjust if sim feels slower than real robot)
+        self.declare_parameter('base_velocity_scale', 1.0)
+        self.base_velocity_scale = self.get_parameter('base_velocity_scale').value
+        self.get_logger().info(f'Base velocity scale: {self.base_velocity_scale}')
 
         self.max_arm_height = 1.1
 
@@ -1513,6 +1537,27 @@ class StretchMujocoDriver(Node):
             Trigger,
             "/clear_world_frames",
             self.clear_mujoco_world_frames_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_arm_service = self.create_service(
+            Trigger,
+            "/camera_along_arm",
+            self.camera_along_arm_service_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_base_service = self.create_service(
+            Trigger,
+            "/camera_along_base",
+            self.camera_along_base_service_callback,
+            callback_group=self.main_group,
+        )
+
+        self.camera_along_base_backward_service = self.create_service(
+            Trigger,
+            "/camera_along_base_backward",
+            self.camera_along_base_backward_service_callback,
             callback_group=self.main_group,
         )
 
