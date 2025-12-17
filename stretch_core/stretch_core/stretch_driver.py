@@ -168,7 +168,7 @@ class StretchDriver(Node):
             if 'stretch_gripper' in self.robot.end_of_arm.joints:
                 pos = self.gripper_conversion.finger_to_robotis(qpos[Idx.GRIPPER])
                 self.robot.end_of_arm.move_to('stretch_gripper', pos)
-            self.get_logger().info(f"Moved to position qpos: {qpos}")
+            self.get_logger().info(f"Moved to position qpos: {qpos}", throttle_duration_sec=5.0)
         except Exception as e:
             self.get_logger().error('Failed to move to position: {0}'.format(e))
 

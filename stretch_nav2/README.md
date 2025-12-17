@@ -4,6 +4,38 @@
 
 The *stretch_nav2* package provides the standard ROS 2 navigation stack (Nav2) with its launch files. This package utilizes slam_toolbox and Nav2 to drive Stretch around a mapped space. Running this code will require the robot to be untethered. We recommend stowing the arm while running navigation on the robot.
 
+## TLDR Commands
+Map the house:
+```bash
+ros2 launch stretch_nav2 offline_mapping.launch.py teleop_type:=keyboard
+```
+```bash
+ros2 launch da_core driver_assistance.launch.py use_real_robot:=true 
+```
+```bash
+ros2 launch da_interface interface.launch.py interface:=keyboard
+```
+```bash
+mkdir ${HELLO_FLEET_PATH}/maps
+ros2 run nav2_map_server map_saver_cli -f ${HELLO_FLEET_PATH}/maps/<user>-home
+```
+Navigate the house:
+```bash
+ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/<user>-home.yaml
+# Give a 2D pose estimate to start outputing map tf
+# Change kitchen and bathroom xyz locations, and possibly orientations in @stretch_nav2/stretch_nav2/room_navigator.py
+```
+```bash
+ros2 launch da_core driver_assistance.launch.py use_real_robot:=true
+```
+```bash
+ros2 launch da_interface interface.launch.py interface:=keyboard
+```
+
+
+
+
+
 ## Quickstart
 
 The first step is to map the space that the robot will navigate in. The `offline_mapping.launch.py` will enable you to do this. First, run:
