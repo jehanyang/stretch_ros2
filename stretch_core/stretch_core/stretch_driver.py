@@ -788,6 +788,12 @@ class StretchDriver(Node):
         response.message = message
         return response
 
+    def camera_along_base_backward_service_callback(self, request, response):
+        success, message = self.camera_along_base_backward()
+        response.success = success
+        response.message = message
+        return response
+
     def get_joint_states_callback(self, request, response):
         joint_limits = JointState()
         joint_limits.header.stamp = self.get_clock().now().to_msg()
@@ -917,6 +923,22 @@ class StretchDriver(Node):
         self.robot.camera_along_base_direction()
         self.change_mode(last_robot_mode, lambda: None)
         return True, 'Moved camera along base.'
+
+    def camera_along_base_backward(self):
+        self.robot_mode_rwlock.acquire_read()
+        can_move_camera = self.robot_mode in self.control_modes
+        last_robot_mode = copy.copy(self.robot_mode)
+        self.robot_mode_rwlock.release_read()
+        if not can_move_camera:
+            errmsg = f'Cannot move camera while in mode={last_robot_mode}.'
+            self.get_logger().error(errmsg)
+            return False, errmsg
+        self.change_mode('camera_to_base_backward', lambda: None)
+        # Point camera backward (pan=-3.14, tilt=-0.6)
+        self.robot.head.move_to('head_pan', -3.14)
+        self.robot.head.move_to('head_tilt', -0.6)
+        self.change_mode(last_robot_mode, lambda: None)
+        return True, 'Moved camera along base backward.'
 
     # ROS Setup #################
     def ros_setup(self):
@@ -1139,9 +1161,14 @@ class StretchDriver(Node):
                                                             self.camera_along_arm_service_callback, 
                                                             callback_group=self.main_group)
         
-        self.camera_along_base_service = self.create_service(Trigger, 
-                                                            '/camera_along_base', 
-                                                            self.camera_along_base_service_callback, 
+        self.camera_along_base_service = self.create_service(Trigger,
+                                                            '/camera_along_base',
+                                                            self.camera_along_base_service_callback,
+                                                            callback_group=self.main_group)
+
+        self.camera_along_base_backward_service = self.create_service(Trigger,
+                                                            '/camera_along_base_backward',
+                                                            self.camera_along_base_backward_service_callback,
                                                             callback_group=self.main_group)
 
         self.self_collision_avoidance = self.create_service(SetBool,
