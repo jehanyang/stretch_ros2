@@ -26,12 +26,16 @@ Actions:
     Client: /navigate_to_pose (NavigateToPose) - To cancel/resend goals
 """
 
+import math
+
+import numpy as np
 import rclpy
 from rclpy.node import Node
 from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
 from geometry_msgs.msg import Twist, PoseStamped
+from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32MultiArray, String
 from std_srvs.srv import Trigger
 from nav2_msgs.action import NavigateToPose
@@ -52,19 +56,28 @@ class CmdVelMux(Node):
         self.declare_parameter('output_topic', '/stretch/cmd_vel')
         self.declare_parameter('control_topic', '/nav_control')
         self.declare_parameter('stow_on_goal', True)
-        self.declare_parameter('backup_speed', 0.1)  # m/s for backward movement
-        self.declare_parameter('forward_speed', 0.1)  # m/s for forward movement when no Nav2 goal
-        self.declare_parameter('turn_speed', 0.5)    # rad/s for left/right turning
-        self.declare_parameter('nav2_angular_scale', 2.0)  # multiplier for Nav2's angular velocity
+        self.declare_parameter('nav2_linear_scale', 5.0)  # multiplier for Nav2's linear velocity
+        self.declare_parameter('nav2_angular_scale', 5.0)  # multiplier for Nav2's angular velocity
+        self.declare_parameter('max_linear_acceleration', 1.0)  # m/s^2
+        self.declare_parameter('max_linear_braking', 2.0)  # m/s^2
+        self.declare_parameter('max_angular_acceleration', 2.0)  # rad/s^2
+        self.declare_parameter('max_angular_braking', 4.0)  # rad/s^2
 
         input_topic = self.get_parameter('input_topic').get_parameter_value().string_value
         output_topic = self.get_parameter('output_topic').get_parameter_value().string_value
         control_topic = self.get_parameter('control_topic').get_parameter_value().string_value
         self.stow_on_goal = self.get_parameter('stow_on_goal').get_parameter_value().bool_value
-        self.backup_speed = self.get_parameter('backup_speed').get_parameter_value().double_value
-        self.forward_speed = self.get_parameter('forward_speed').get_parameter_value().double_value
-        self.turn_speed = self.get_parameter('turn_speed').get_parameter_value().double_value
+        self.nav2_linear_scale = self.get_parameter('nav2_linear_scale').get_parameter_value().double_value
         self.nav2_angular_scale = self.get_parameter('nav2_angular_scale').get_parameter_value().double_value
+        self.max_linear_acceleration = self.get_parameter('max_linear_acceleration').get_parameter_value().double_value
+        self.max_linear_braking = self.get_parameter('max_linear_braking').get_parameter_value().double_value
+        self.max_angular_acceleration = self.get_parameter('max_angular_acceleration').get_parameter_value().double_value
+        self.max_angular_braking = self.get_parameter('max_angular_braking').get_parameter_value().double_value
+
+        # Current velocity state for acceleration limiting
+        self.current_linear_vel = 0.0
+        self.current_angular_vel = 0.0
+        self.last_cmd_time = None
 
         # Control state: [forward, left, right, back]
         self.control = [0.0, 0.0, 0.0, 0.0]
@@ -84,6 +97,7 @@ class CmdVelMux(Node):
         # Robot mode tracking
         self.robot_mode = None
         self.required_mode = 'room_navigation'
+        self.has_stowed_for_session = False  # Track if we've stowed since entering room_navigation
 
         # Subscriber for robot mode
         self.mode_sub = self.create_subscription(
@@ -147,6 +161,30 @@ class CmdVelMux(Node):
             callback_group=self.callback_group
         )
 
+        # Service clients for camera direction
+        self.camera_along_base_client = self.create_client(
+            Trigger,
+            '/camera_along_base',
+            callback_group=self.callback_group
+        )
+        self.camera_along_base_backward_client = self.create_client(
+            Trigger,
+            '/camera_along_base_backward',
+            callback_group=self.callback_group
+        )
+
+        # Camera direction tracking ('forward', 'backward', or None)
+        self.current_camera_direction = None
+
+        # Lidar-based slowdown (use BEST_EFFORT QoS to match the lidar publisher)
+        lidar_qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.BEST_EFFORT)
+        self.lidar_sub = self.create_subscription(LaserScan, "/scan_filtered", self.lidar_callback, lidar_qos)
+        self.avoid_width = 1
+        self.avoid_extent = self.avoid_width / 2.0
+        self.avoid_slowdown = 0.3
+        self.front_vel_multiplier = 1.0
+        self.back_vel_multiplier = 1.0
+
         # Timer to publish cmd_vel at regular rate
         self.timer = self.create_timer(0.05, self.publish_cmd_vel)  # 20 Hz
 
@@ -161,11 +199,65 @@ class CmdVelMux(Node):
         """Track the current robot mode."""
         if self.robot_mode != msg.data:
             self.get_logger().info(f'Robot mode changed: {self.robot_mode} -> {msg.data}')
+            # Reset stow flag when leaving room_navigation mode
+            if self.robot_mode == self.required_mode and msg.data != self.required_mode:
+                self.has_stowed_for_session = False
         self.robot_mode = msg.data
 
     def nav2_cmd_vel_callback(self, msg: Twist):
         """Store the latest Nav2 cmd_vel."""
         self.nav2_cmd_vel = msg
+
+    def lidar_callback(self, msg: LaserScan) -> None:
+        """Process lidar data to compute front/back velocity multipliers for obstacle slowdown.
+
+        Lidar frame is rotated 180° from base_link, so:
+        - Angle 0 in lidar frame = backward direction in robot frame
+        - Angle ±π in lidar frame = forward direction in robot frame
+
+        Handles both -π to π (real robot) and 0 to 2π (simulation) angle ranges
+        by normalizing to -π to π.
+        """
+        angles = np.linspace(msg.angle_min, msg.angle_max, len(msg.ranges))
+
+        # Normalize angles to -π to π range (handles both real robot and simulation)
+        # Real robot: already -π to π, no change
+        # Simulation: 0 to 2π, angles > π get converted to negative equivalent
+        angles = np.where(angles > math.pi, angles - 2*math.pi, angles)
+
+        # Filter out invalid readings (negative values like -1.0 mean no return)
+        ranges = np.array(msg.ranges)
+        ranges = np.where(ranges <= 0, np.inf, ranges)
+
+        # Front of robot: around ±π (theta < -2.50 or theta > 2.50)
+        # We compute lateral offset (y) to filter for obstacles in robot's path
+        front_y = [r * math.sin(theta) if (theta < -2.50 or theta > 2.50) else np.inf for r, theta in zip(ranges, angles)]
+        front_ranges = [r if abs(y) < self.avoid_extent else np.inf for r, y in zip(ranges, front_y)]
+
+        # Back of robot: around 0 (theta > -0.64 and theta < 0.64)
+        back_y = [r * math.sin(theta) if (theta > -0.64 and theta < 0.64) else np.inf for r, theta in zip(ranges, angles)]
+        back_ranges = [r if abs(y) < self.avoid_extent else np.inf for r, y in zip(ranges, back_y)]
+
+        min_front = min(front_ranges)
+        min_back = min(back_ranges)
+
+        lidar_to_front_of_robot = 0.05
+        lidar_to_back_of_robot = 0.23
+
+        # Smoothly interpolate multiplier: 1.0 at avoid_slowdown distance, 0.0 at robot edge
+        front_distance = min_front - lidar_to_front_of_robot
+        if front_distance < self.avoid_slowdown:
+            self.front_vel_multiplier = max(0.0, min(1.0, front_distance / self.avoid_slowdown))
+            self.get_logger().info(f"Slowing down, front vel multiplier: {self.front_vel_multiplier:.2f}", throttle_duration_sec=1.0)
+        else:
+            self.front_vel_multiplier = 1.0
+
+        back_distance = min_back - lidar_to_back_of_robot
+        if back_distance < self.avoid_slowdown:
+            self.back_vel_multiplier = max(0.0, min(1.0, back_distance / self.avoid_slowdown))
+            self.get_logger().info(f"Slowing down, back vel multiplier: {self.back_vel_multiplier:.2f}", throttle_duration_sec=1.0)
+        else:
+            self.back_vel_multiplier = 1.0
 
     def control_callback(self, msg: Float32MultiArray):
         """Handle directional control input."""
@@ -184,10 +276,12 @@ class CmdVelMux(Node):
             self.cancel_nav2_goal()
             self.is_stopped = True
         elif not all_zero and self.is_stopped:
-            # Transition from stopped to moving - stow robot and resend goal
+            # Transition from stopped to moving
             self.is_stopped = False
-            if self.stow_on_goal:
+            # Only stow once when first entering room_navigation mode
+            if self.stow_on_goal and not self.has_stowed_for_session:
                 self.stow_robot()
+                self.has_stowed_for_session = True
             if self.saved_goal_pose is not None:
                 self.get_logger().info('Resuming: resending Nav2 goal')
                 self.send_nav2_goal(self.saved_goal_pose)
@@ -223,36 +317,73 @@ class CmdVelMux(Node):
 
         forward, left, right, back = self.control
 
+        # Update camera direction based on movement
+        self.update_camera_direction(forward > 0.0, back > 0.0)
+
         output = Twist()
 
         if back > 0.0:
-            # Back overrides everything - just go backward
-            output.linear.x = -self.backup_speed * back
+            # Back overrides everything - back value is already the desired velocity
+            output.linear.x = -back
             output.angular.z = 0.0
         elif forward > 0.0 or left > 0.0 or right > 0.0:
             # Check if Nav2 is providing velocity commands
             nav2_has_velocity = abs(self.nav2_cmd_vel.linear.x) > 0.001 or abs(self.nav2_cmd_vel.angular.z) > 0.001
 
             if nav2_has_velocity:
-                # Scale Nav2's linear velocity by forward (or by turn magnitude)
-                forward_scale = forward if forward > 0.0 else max(0.3, 1.0 - (left + right) * 0.5)
-                output.linear.x = self.nav2_cmd_vel.linear.x * forward_scale
-                # Start with Nav2's angular velocity scaled (with additional nav2_angular_scale multiplier)
-                output.angular.z = self.nav2_cmd_vel.angular.z * forward_scale * self.nav2_angular_scale
-            else:
-                # No Nav2 goal - use manual forward speed
+                # Compute user's desired angular velocity
+                user_angular = 0.0
+                if left > 0.0:
+                    user_angular += left
+                if right > 0.0:
+                    user_angular -= right
+
+                # Determine forward scaling based on user input
                 if forward > 0.0:
-                    output.linear.x = self.forward_speed * forward
+                    # User pressing forward - use full forward scale
+                    forward_scale = forward
+                elif left > 0.0 or right > 0.0:
+                    # User only pressing left/right - reduce forward motion significantly
+                    forward_scale = max(left, right) * 0.3
+                else:
+                    forward_scale = 0.0
+
+                output.linear.x = self.nav2_cmd_vel.linear.x * forward_scale * self.nav2_linear_scale
+
+                # Get Nav2's angular command (scaled)
+                nav2_angular = self.nav2_cmd_vel.angular.z * forward_scale * self.nav2_angular_scale
+
+                # If user and Nav2 want opposite directions, user takes over completely
+                if user_angular != 0.0 and nav2_angular != 0.0 and np.sign(user_angular) != np.sign(nav2_angular):
+                    output.angular.z = user_angular
+                else:
+                    # Same direction or no conflict - combine them
+                    output.angular.z = nav2_angular + user_angular
+            else:
+                # No Nav2 goal - use forward value directly as velocity
+                if forward > 0.0:
+                    output.linear.x = forward
                 output.angular.z = 0.0
 
-            # Add turning from left/right
-            if left > 0.0:
-                output.angular.z += self.turn_speed * left
-            if right > 0.0:
-                output.angular.z -= self.turn_speed * right
+                # User turning without Nav2
+                if left > 0.0:
+                    output.angular.z += left
+                if right > 0.0:
+                    output.angular.z -= right
         else:
-            # All zeros - don't publish anything (robot should stop from Nav2 being cancelled)
-            return
+            # All zeros - ramp down to stop smoothly
+            output.linear.x = 0.0
+            output.angular.z = 0.0
+
+        # Apply lidar slowdown before publishing
+        if output.linear.x > 0:
+            output.linear.x *= self.front_vel_multiplier
+        elif output.linear.x < 0:
+            output.linear.x *= self.back_vel_multiplier
+
+        # Apply acceleration limiting
+        output.linear.x, output.angular.z = self.apply_acceleration_limit(
+            output.linear.x, output.angular.z)
 
         self.pub.publish(output)
 
@@ -266,9 +397,10 @@ class CmdVelMux(Node):
             self.get_logger().info('Sending new goal to Nav2')
             self.send_nav2_goal(msg)
 
-        # Stow the robot when a new goal is received
-        if self.stow_on_goal:
+        # Only stow once when first entering room_navigation mode
+        if self.stow_on_goal and not self.has_stowed_for_session:
             self.stow_robot()
+            self.has_stowed_for_session = True
 
     def stow_robot(self):
         """Call the stow_the_robot service."""
@@ -340,6 +472,84 @@ class CmdVelMux(Node):
             self.get_logger().warn('Nav2 goal was rejected')
             return
         self.get_logger().info('Nav2 goal accepted')
+
+    def apply_acceleration_limit(self, target_linear: float, target_angular: float) -> tuple:
+        """Apply acceleration limiting to velocity commands.
+
+        Uses asymmetric limits - slower acceleration, faster braking.
+        """
+        now = self.get_clock().now()
+        if self.last_cmd_time is None:
+            dt = 0.05  # Assume 20Hz on first call
+        else:
+            dt = (now - self.last_cmd_time).nanoseconds / 1e9
+        self.last_cmd_time = now
+
+        # Apply acceleration limit to linear velocity
+        self.current_linear_vel = self._limit_velocity(
+            self.current_linear_vel, target_linear, dt,
+            self.max_linear_acceleration, self.max_linear_braking)
+
+        # Apply acceleration limit to angular velocity
+        self.current_angular_vel = self._limit_velocity(
+            self.current_angular_vel, target_angular, dt,
+            self.max_angular_acceleration, self.max_angular_braking)
+
+        return self.current_linear_vel, self.current_angular_vel
+
+    def _limit_velocity(self, current: float, target: float, dt: float,
+                        max_accel: float, max_brake: float) -> float:
+        """Apply acceleration/braking limit to a single velocity component."""
+        if dt <= 0.0:
+            return target
+
+        delta = target - current
+        if abs(delta) < 0.001:
+            return target
+
+        # Determine if we're speeding up or slowing down
+        same_direction = (np.sign(current) == np.sign(target)) or (current == 0.0) or (target == 0.0)
+        speeding_up = (abs(target) > abs(current)) and same_direction
+
+        # Use acceleration limit when speeding up, braking limit when slowing down
+        max_change = (max_accel if speeding_up else max_brake) * dt
+
+        if abs(delta) <= max_change:
+            return target
+        else:
+            return current + np.sign(delta) * max_change
+
+    def update_camera_direction(self, is_forward: bool, is_backward: bool):
+        """Update camera direction based on movement direction.
+
+        Uses /camera_along_base service for forward direction.
+        Uses /camera_along_base_backward service for backward direction.
+        """
+        if is_forward and self.current_camera_direction != 'forward':
+            # Point camera forward
+            if self.camera_along_base_client.wait_for_service(timeout_sec=0.1):
+                request = Trigger.Request()
+                future = self.camera_along_base_client.call_async(request)
+                future.add_done_callback(self.camera_direction_callback)
+                self.current_camera_direction = 'forward'
+                self.get_logger().info('Switching camera to forward direction', throttle_duration_sec=1.0)
+        elif is_backward and self.current_camera_direction != 'backward':
+            # Point camera backward
+            if self.camera_along_base_backward_client.wait_for_service(timeout_sec=0.1):
+                request = Trigger.Request()
+                future = self.camera_along_base_backward_client.call_async(request)
+                future.add_done_callback(self.camera_direction_callback)
+                self.current_camera_direction = 'backward'
+                self.get_logger().info('Switching camera to backward direction', throttle_duration_sec=1.0)
+
+    def camera_direction_callback(self, future):
+        """Handle result of camera direction service call."""
+        try:
+            result = future.result()
+            if not result.success:
+                self.get_logger().warn(f'Camera direction change failed: {result.message}')
+        except Exception as e:
+            self.get_logger().error(f'Camera direction service call failed: {e}')
 
 
 def main(args=None):
