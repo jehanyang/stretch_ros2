@@ -94,6 +94,11 @@ class CmdVelMux(Node):
         self.last_goal_send_time = None  # Track when we last sent a goal
         self.goal_resend_interval = 1.0  # seconds
 
+        # Prevent overshoot: ignore forward commands until user releases the button after reaching goal
+        self.goal_just_reached = False
+        self.last_forward_time = None  # Track when forward was last non-zero
+        self.forward_release_tolerance = 0.1  # seconds - forward must be 0 for this long to count as released
+
         # Robot mode tracking
         self.robot_mode = None
         self.required_mode = 'room_navigation'
@@ -267,6 +272,25 @@ class CmdVelMux(Node):
 
         forward, left, right, back = msg.data[0], msg.data[1], msg.data[2], msg.data[3]
 
+        # Track when forward was last pressed (for release tolerance)
+        now = self.get_clock().now()
+        if forward > 0.0:
+            self.last_forward_time = now
+
+        # Clear goal_just_reached flag when user releases forward button (with tolerance)
+        if self.goal_just_reached:
+            if forward == 0.0:
+                # Check if forward has been released long enough
+                if self.last_forward_time is None:
+                    # Never pressed forward, clear the flag
+                    self.get_logger().info('Forward released after goal reached, re-enabling forward commands')
+                    self.goal_just_reached = False
+                else:
+                    time_since_forward = (now - self.last_forward_time).nanoseconds / 1e9
+                    if time_since_forward >= self.forward_release_tolerance:
+                        self.get_logger().info('Forward released after goal reached, re-enabling forward commands')
+                        self.goal_just_reached = False
+
         # Check if all zeros (stop command)
         all_zero = (forward == 0.0 and left == 0.0 and right == 0.0 and back == 0.0)
 
@@ -316,6 +340,10 @@ class CmdVelMux(Node):
                 self.last_goal_send_time = now
 
         forward, left, right, back = self.control
+
+        # Ignore forward commands if goal was just reached (prevent overshoot)
+        if self.goal_just_reached and forward > 0.0:
+            forward = 0.0
 
         # Update camera direction based on movement
         self.update_camera_direction(forward > 0.0, back > 0.0)
@@ -486,6 +514,7 @@ class CmdVelMux(Node):
             if status == 4:
                 self.get_logger().info('Navigation goal reached, clearing saved goal')
                 self.saved_goal_pose = None
+                self.goal_just_reached = True  # Ignore forward until user releases button
             elif status == 5:  # CANCELED
                 self.get_logger().info('Navigation goal was canceled')
             elif status == 6:  # ABORTED
