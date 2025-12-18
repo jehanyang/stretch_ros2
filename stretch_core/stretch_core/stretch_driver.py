@@ -899,45 +899,39 @@ class StretchDriver(Node):
     def camera_along_arm(self):
         self.robot_mode_rwlock.acquire_read()
         can_move_camera = self.robot_mode in self.control_modes
-        last_robot_mode = copy.copy(self.robot_mode)
+        current_mode = self.robot_mode
         self.robot_mode_rwlock.release_read()
         if not can_move_camera:
-            errmsg = f'Cannot move camera while in mode={last_robot_mode}.'
+            errmsg = f'Cannot move camera while in mode={current_mode}.'
             self.get_logger().error(errmsg)
             return False, errmsg
-        self.change_mode('camera_to_arm', lambda: None)
         self.robot.camera_along_arm_direction()
-        self.change_mode(last_robot_mode, lambda: None)
         return True, 'Moved camera along arm.'
     
     def camera_along_base(self):
         self.robot_mode_rwlock.acquire_read()
         can_move_camera = self.robot_mode in self.control_modes
-        last_robot_mode = copy.copy(self.robot_mode)
+        current_mode = self.robot_mode
         self.robot_mode_rwlock.release_read()
         if not can_move_camera:
-            errmsg = f'Cannot move camera while in mode={last_robot_mode}.'
+            errmsg = f'Cannot move camera while in mode={current_mode}.'
             self.get_logger().error(errmsg)
             return False, errmsg
-        self.change_mode('camera_to_base', lambda: None)
         self.robot.camera_along_base_direction()
-        self.change_mode(last_robot_mode, lambda: None)
         return True, 'Moved camera along base.'
 
     def camera_along_base_backward(self):
         self.robot_mode_rwlock.acquire_read()
         can_move_camera = self.robot_mode in self.control_modes
-        last_robot_mode = copy.copy(self.robot_mode)
+        current_mode = self.robot_mode
         self.robot_mode_rwlock.release_read()
         if not can_move_camera:
-            errmsg = f'Cannot move camera while in mode={last_robot_mode}.'
+            errmsg = f'Cannot move camera while in mode={current_mode}.'
             self.get_logger().error(errmsg)
             return False, errmsg
-        self.change_mode('camera_to_base_backward', lambda: None)
         # Point camera backward (pan=-3.14, tilt=-0.6)
         self.robot.head.move_to('head_pan', -3.14)
         self.robot.head.move_to('head_tilt', -0.6)
-        self.change_mode(last_robot_mode, lambda: None)
         return True, 'Moved camera along base backward.'
 
     # ROS Setup #################

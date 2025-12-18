@@ -29,6 +29,9 @@ ros2 launch stretch_nav2 room_navigator.launch.py map:=${HELLO_FLEET_PATH}/maps/
 ros2 launch da_core driver_assistance.launch.py use_real_robot:=true
 ```
 ```bash
+ros2 launch da_perception owl_vit.launch.py
+```
+```bash
 ros2 launch da_interface interface.launch.py interface:=keyboard
 ```
 

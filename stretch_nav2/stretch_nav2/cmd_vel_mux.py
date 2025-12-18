@@ -200,7 +200,7 @@ class CmdVelMux(Node):
         if self.robot_mode != msg.data:
             self.get_logger().info(f'Robot mode changed: {self.robot_mode} -> {msg.data}')
             # Reset stow flag when leaving room_navigation mode
-            if self.robot_mode == self.required_mode and msg.data != self.required_mode:
+            if (self.robot_mode == self.required_mode and msg.data != self.required_mode) and msg.data != "stowing":
                 self.has_stowed_for_session = False
         self.robot_mode = msg.data
 
@@ -472,6 +472,26 @@ class CmdVelMux(Node):
             self.get_logger().warn('Nav2 goal was rejected')
             return
         self.get_logger().info('Nav2 goal accepted')
+
+        # Get the result to detect when goal is reached
+        result_future = goal_handle.get_result_async()
+        result_future.add_done_callback(self.nav_goal_result_callback)
+
+    def nav_goal_result_callback(self, future):
+        """Handle result when navigation goal completes."""
+        try:
+            result = future.result()
+            status = result.status
+            # Status 4 = SUCCEEDED (from action_msgs/GoalStatus)
+            if status == 4:
+                self.get_logger().info('Navigation goal reached, clearing saved goal')
+                self.saved_goal_pose = None
+            elif status == 5:  # CANCELED
+                self.get_logger().info('Navigation goal was canceled')
+            elif status == 6:  # ABORTED
+                self.get_logger().warn('Navigation goal aborted')
+        except Exception as e:
+            self.get_logger().error(f'Failed to get navigation result: {e}')
 
     def apply_acceleration_limit(self, target_linear: float, target_angular: float) -> tuple:
         """Apply acceleration limiting to velocity commands.
