@@ -727,6 +727,13 @@ class StretchDriver(Node):
         response.message = message
         return response
 
+    def reset_robot_for_task_callback(self, request, response):
+        self.get_logger().info('Received reset_robot_for_task service call.')
+        success, message = self.reset_robot_for_task()
+        response.success = success
+        response.message = message
+        return response
+
     def navigation_mode_service_callback(self, request, response):
         success, message = self.turn_on_navigation_mode()
         response.success = success
@@ -873,6 +880,31 @@ class StretchDriver(Node):
         self.robot.stow()
         self.change_mode(last_robot_mode, lambda: None)
         return True, 'Stowed.'
+
+    def reset_robot_for_task(self):
+        """Reset robot to task-ready position (stow + wrist_yaw at 0 + camera forward)."""
+        self.robot_mode_rwlock.acquire_read()
+        can_reset = self.robot_mode in self.control_modes
+        last_robot_mode = copy.copy(self.robot_mode)
+        self.robot_mode_rwlock.release_read()
+        if not can_reset:
+            errmsg = f'Cannot reset for task while in mode={last_robot_mode}.'
+            self.get_logger().error(errmsg)
+            return False, errmsg
+        self.change_mode('resetting_for_task', lambda: None)
+        # Stow the robot first (moves arm, lift, wrist, head to stow positions)
+        self.robot.stow()
+        # Then move wrist_yaw to 0 (straight forward) for task readiness
+        self.robot.end_of_arm.move_to('wrist_yaw', 0.0)
+        self.robot.push_command()
+        self.robot.end_of_arm.wait_until_at_setpoint()
+        # Move camera to base forward view
+        self.robot.head.move_to('head_pan', 0.0)
+        self.robot.head.move_to('head_tilt', -0.6)
+        self.robot.push_command()
+        self.robot.head.wait_until_at_setpoint()
+        self.change_mode(last_robot_mode, lambda: None)
+        return True, 'Reset for task (stowed with wrist_yaw at 0, camera forward).'
 
     def runstop_the_robot(self, runstopped, just_change_mode=False):
         if runstopped:
@@ -1138,6 +1170,11 @@ class StretchDriver(Node):
         self.stow_the_robot_service = self.create_service(Trigger,
                                                            '/stow_the_robot',
                                                            self.stow_the_robot_callback,
+                                                           callback_group=self.main_group)
+
+        self.reset_robot_for_task_service = self.create_service(Trigger,
+                                                           '/reset_robot_for_task',
+                                                           self.reset_robot_for_task_callback,
                                                            callback_group=self.main_group)
 
         self.runstop_service = self.create_service(SetBool,
